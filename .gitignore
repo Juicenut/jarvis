@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Environment
+.env
+server/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (for Porcupine SDK if installed via npm)
+node_modules/
+
+# Avatar assets (large binary files)
+*.glb
+!client/assets/avatar/.gitkeep
