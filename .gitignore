@@ -11,6 +11,7 @@ venv/
 # Environment
 .env
 server/.env
+server/google-credentials.json
 
 # IDE
 .vscode/

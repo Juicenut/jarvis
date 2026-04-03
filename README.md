@@ -9,7 +9,7 @@ Browser (Client)                    Server (Python/FastAPI)
 ├── Porcupine WASM (wake word)      ├── Silero VAD (speech boundaries)
 ├── WebAudio API (mic capture)      ├── Deepgram (STT)
 ├── TalkingHead.js (3D avatar)      ├── Claude API (LLM, streaming)
-├── Web Audio (playback)            ├── Cartesia Sonic (TTS + timestamps)
+├── Web Audio (playback)            ├── Google Cloud TTS (+ timestamps)
 └── WebSocket client                └── WebSocket server (FastAPI)
 ```
 
@@ -34,9 +34,9 @@ python -m http.server 3001
 | Key | Service | Purpose |
 |-----|---------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic | Claude LLM |
-| `CARTESIA_API_KEY` | Cartesia | Sonic TTS with word timestamps |
 | `DEEPGRAM_API_KEY` | Deepgram | Streaming STT |
 | `PICOVOICE_ACCESS_KEY` | Picovoice | Porcupine wake word detection |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Google Cloud | Text-to-Speech (service account JSON) |
 
 ## Documentation
 
@@ -48,7 +48,7 @@ python -m http.server 3001
 - **Wake Word:** Picovoice Porcupine (WASM, runs in browser)
 - **STT:** Deepgram Nova-2 (streaming)
 - **LLM:** Anthropic Claude (streaming)
-- **TTS:** Cartesia Sonic (word-level timestamps for lip sync)
+- **TTS:** Google Cloud TTS (word-level timestamps, native TalkingHead.js support)
 - **Avatar:** TalkingHead.js (3D, Oculus visemes)
 - **Backend:** Python / FastAPI / WebSocket
 - **Frontend:** Vanilla JS (no build step)
