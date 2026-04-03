@@ -21,15 +21,19 @@ _tts_available = False
 
 
 def _get_client():
-    """Lazy-init the Google Cloud TTS client."""
+    """Lazy-init the Google Cloud TTS client.
+
+    Uses the v1beta1 API because word-level timepoints (enable_time_pointing)
+    are only available in the beta, not the stable v1 API.
+    """
     global _tts_client, _tts_available
     if _tts_client is not None:
         return _tts_client
     try:
-        from google.cloud import texttospeech
+        from google.cloud import texttospeech_v1beta1 as texttospeech
         _tts_client = texttospeech.TextToSpeechClient()
         _tts_available = True
-        logger.info("Google Cloud TTS client initialized")
+        logger.info("Google Cloud TTS (v1beta1) client initialized")
         return _tts_client
     except Exception as e:
         logger.warning("Google Cloud TTS not available: %s", e)
@@ -60,7 +64,7 @@ class GoogleTTS:
         if not client:
             return StubTTS().synthesize_sync(text)
 
-        from google.cloud import texttospeech
+        from google.cloud import texttospeech_v1beta1 as texttospeech
 
         # Build SSML with <mark> tags for word-level timestamps
         words = text.split()
@@ -83,18 +87,22 @@ class GoogleTTS:
             speaking_rate=1.0,
         )
 
+        # Build full request object — enable_time_pointing is only
+        # available via the request object, not as a kwarg
+        request = texttospeech.SynthesizeSpeechRequest(
+            input=synthesis_input,
+            voice=voice_params,
+            audio_config=audio_config,
+            enable_time_pointing=[
+                texttospeech.SynthesizeSpeechRequest.TimepointType.SSML_MARK
+            ],
+        )
+
         # Run synchronous API call in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: client.synthesize_speech(
-                input=synthesis_input,
-                voice=voice_params,
-                audio_config=audio_config,
-                enable_time_pointing=[
-                    texttospeech.SynthesizeSpeechRequest.TimepointType.SSML_MARK
-                ],
-            ),
+            lambda: client.synthesize_speech(request=request),
         )
 
         # Extract timepoints

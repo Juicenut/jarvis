@@ -19,6 +19,12 @@ server/google-credentials.json
 *.swp
 *.swo
 
+# Dev script runtime files
+.server.pid
+.client.pid
+.server.log
+.client.log
+
 # OS
 .DS_Store
 Thumbs.db
