@@ -85,15 +85,23 @@ async def websocket_endpoint(ws: WebSocket):
     async def run_stt_receiver():
         """Background task: receive transcripts from STT and forward to client."""
         nonlocal stt
+        accumulated_text = ""
         try:
             async for result in stt.receive_transcripts():
-                await ws.send_json({
-                    "type": "transcript",
-                    "text": result["text"],
-                    "final": result["is_final"],
-                })
+                text = result["text"]
+
+                # Send non-empty transcripts to client for display
+                if text:
+                    accumulated_text = text  # Deepgram replaces, not appends
+                    await ws.send_json({
+                        "type": "transcript",
+                        "text": text,
+                        "final": result["is_final"],
+                    })
+
                 logger.info("Transcript [final=%s, speech_final=%s]: %s",
-                            result["is_final"], result["speech_final"], result["text"])
+                            result["is_final"], result["speech_final"],
+                            text if text else "(empty)")
 
                 if result["speech_final"]:
                     # User stopped speaking — transition to processing
@@ -101,12 +109,15 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "state", "state": "processing"})
                     logger.info("Client %s: speech_final -> processing", client_id)
 
-                    final_text = result["text"]
                     await stt.stop_session()
                     stt = None
 
-                    # Run through LLM pipeline
-                    await pipeline.process_utterance(final_text, ws)
+                    # Use accumulated transcript (speech_final may have empty text)
+                    final_text = accumulated_text.strip()
+                    if final_text:
+                        await pipeline.process_utterance(final_text, ws)
+                    else:
+                        logger.info("Empty transcript after speech_final, skipping LLM")
 
                     # Return to idle
                     session["state"] = "idle"
@@ -141,7 +152,14 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "audio":
                 if stt and session["state"] == "listening":
                     # Decode base64 audio and forward to STT
-                    pcm_bytes = base64.b64decode(msg.get("data", ""))
+                    audio_data = msg.get("data", "")
+                    pcm_bytes = base64.b64decode(audio_data)
+                    session["audio_frames"] = session.get("audio_frames", 0) + 1
+                    if session["audio_frames"] == 1:
+                        logger.info("First audio frame: %d bytes (base64 len: %d)",
+                                    len(pcm_bytes), len(audio_data))
+                    elif session["audio_frames"] % 100 == 0:
+                        logger.info("Audio frames sent to STT: %d", session["audio_frames"])
                     await stt.send_audio(pcm_bytes)
 
             elif msg_type == "interrupt":

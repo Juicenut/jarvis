@@ -47,6 +47,14 @@ stop_services() {
     # Also kill any orphaned processes on our ports
     lsof -ti:$SERVER_PORT | xargs kill 2>/dev/null || true
     lsof -ti:$CLIENT_PORT | xargs kill 2>/dev/null || true
+
+    # Wait for ports to release
+    for i in $(seq 1 10); do
+        if ! lsof -ti:$SERVER_PORT >/dev/null 2>&1 && ! lsof -ti:$CLIENT_PORT >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.5
+    done
 }
 
 start_services() {

@@ -49,6 +49,7 @@ class DeepgramSTT:
             try:
                 await self.ws.send(pcm_bytes)
             except websockets.ConnectionClosed:
+                logger.warning("Deepgram connection closed while sending audio")
                 self._closed = True
 
     async def receive_transcripts(self):
@@ -62,30 +63,58 @@ class DeepgramSTT:
         if not self.ws:
             return
 
+        msg_count = 0
         try:
             async for raw in self.ws:
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
+                    logger.warning("Deepgram: non-JSON message")
                     continue
 
-                if msg.get("type") == "Results":
+                msg_type = msg.get("type", "unknown")
+                msg_count += 1
+
+                # Log every message to debug the flow
+                logger.debug("Deepgram msg #%d: type=%s, raw=%s",
+                             msg_count, msg_type, json.dumps(msg)[:300])
+
+                if msg_type == "Results":
                     channel = msg.get("channel", {})
                     alternatives = channel.get("alternatives", [])
                     if not alternatives:
                         continue
 
                     transcript = alternatives[0].get("transcript", "")
-                    if not transcript:
+                    is_final = msg.get("is_final", False)
+                    speech_final = msg.get("speech_final", False)
+
+                    # Log results that have text or signal end of speech
+                    if transcript or speech_final:
+                        logger.info("Deepgram result: text=%r final=%s speech_final=%s",
+                                    transcript[:50] if transcript else "", is_final, speech_final)
+
+                    # Skip empty non-final results (interim silence)
+                    # But ALWAYS yield speech_final — it signals end of utterance
+                    if not transcript and not speech_final:
                         continue
 
                     yield {
                         "text": transcript,
-                        "is_final": msg.get("is_final", False),
-                        "speech_final": msg.get("speech_final", False),
+                        "is_final": is_final,
+                        "speech_final": speech_final,
                     }
-        except websockets.ConnectionClosed:
-            logger.info("Deepgram connection closed")
+
+                elif msg_type == "Metadata":
+                    logger.info("Deepgram metadata: %s", json.dumps(msg)[:200])
+
+                elif msg_type == "Error" or msg_type == "CloseStream":
+                    logger.error("Deepgram error/close: %s", json.dumps(msg)[:200])
+
+        except websockets.ConnectionClosed as e:
+            logger.info("Deepgram connection closed: %s", e)
+        except Exception as e:
+            logger.error("Deepgram receiver error: %s", e)
 
     async def stop_session(self):
         """Close Deepgram WebSocket cleanly."""
