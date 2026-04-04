@@ -12,6 +12,7 @@ import logging
 import websockets
 
 logger = logging.getLogger("jarvis.stt")
+logger.setLevel(logging.DEBUG)
 
 DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
 

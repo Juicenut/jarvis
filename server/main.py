@@ -86,6 +86,7 @@ async def websocket_endpoint(ws: WebSocket):
         """Background task: receive transcripts from STT and forward to client."""
         nonlocal stt
         accumulated_text = ""
+        logger.info("STT receiver task started")
         try:
             async for result in stt.receive_transcripts():
                 text = result["text"]
@@ -124,7 +125,8 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "state", "state": "idle"})
                     break
         except Exception as e:
-            logger.error("STT receiver error: %s", e)
+            logger.error("STT receiver error: %s", e, exc_info=True)
+        logger.info("STT receiver task ended")
 
     try:
         while True:
@@ -140,11 +142,20 @@ async def websocket_endpoint(ws: WebSocket):
             msg_type = msg.get("type")
 
             if msg_type == "wake":
+                # Clean up any existing STT session
+                if stt:
+                    await stt.stop_session()
+                    stt = None
+                if stt_task:
+                    stt_task.cancel()
+                    stt_task = None
+
                 session["state"] = "listening"
+                session["audio_frames"] = 0
                 await ws.send_json({"type": "state", "state": "listening"})
                 logger.info("Client %s: wake -> listening", client_id)
 
-                # Start STT session
+                # Start fresh STT session
                 stt = create_stt(config.deepgram_api_key)
                 await stt.start_session()
                 stt_task = asyncio.create_task(run_stt_receiver())

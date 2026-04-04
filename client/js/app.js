@@ -30,6 +30,7 @@ let avatar = null;
 let playback = null;
 let ui = null;
 let streamingAudio = false;
+let continuousListenTimeout = null; // Timer to return to IDLE after silence
 
 // --- DOM refs ---
 const btnConnect = document.getElementById('btn-connect');
@@ -51,6 +52,7 @@ function setState(newState) {
 
         case State.PROCESSING:
             streamingAudio = false;
+            clearTimeout(continuousListenTimeout);
             break;
 
         case State.SPEAKING:
@@ -79,6 +81,10 @@ function handleMessage(msg) {
 
         case 'transcript':
             ui?.showTranscript(msg.text, msg.final);
+            // User is speaking — cancel the idle timeout
+            if (msg.text) {
+                clearTimeout(continuousListenTimeout);
+            }
             break;
 
         case 'response_text':
@@ -146,10 +152,22 @@ async function initAvatar() {
 
     playback = new AudioPlayback();
     playback.onAllComplete = () => {
-        // All sentences spoken — return to idle
+        // All sentences spoken — continue listening for follow-up
         if (currentState === State.SPEAKING) {
-            setState(State.IDLE);
-            wsClient?.send({ type: 'state_update', state: 'idle' });
+            wsClient?.send({ type: 'wake', timestamp: Date.now() });
+            setState(State.LISTENING);
+            streamingAudio = true;
+
+            // If no speech detected within 5 seconds, return to idle
+            clearTimeout(continuousListenTimeout);
+            continuousListenTimeout = setTimeout(() => {
+                if (currentState === State.LISTENING) {
+                    console.log('[App] No follow-up detected, returning to idle');
+                    streamingAudio = false;
+                    wsClient?.send({ type: 'interrupt' });
+                    setState(State.IDLE);
+                }
+            }, 5000);
         }
     };
 
@@ -213,9 +231,50 @@ function triggerInterrupt() {
     // Server will transition us to LISTENING
 }
 
+// --- Mic test ---
+function testMic() {
+    const levelContainer = document.getElementById('mic-level');
+    const levelBar = document.getElementById('mic-level-bar');
+    levelContainer.style.display = 'block';
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        const ctx = new AudioContext();
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const data = new Float32Array(analyser.fftSize);
+
+        const track = stream.getAudioTracks()[0];
+        console.log(`[MicTest] Track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+        console.log(`[MicTest] Settings: ${JSON.stringify(track.getSettings())}`);
+
+        let checks = 0;
+        const interval = setInterval(() => {
+            analyser.getFloatTimeDomainData(data);
+            let max = 0;
+            for (let i = 0; i < data.length; i++) max = Math.max(max, Math.abs(data[i]));
+            const pct = Math.min(100, max * 500); // scale up for visibility
+            levelBar.style.width = pct + '%';
+            levelBar.style.background = max > 0.01 ? '#4caf50' : '#f44336';
+            checks++;
+            if (checks >= 50) { // 5 seconds
+                clearInterval(interval);
+                stream.getTracks().forEach(t => t.stop());
+                ctx.close();
+                levelContainer.style.display = 'none';
+                console.log(`[MicTest] Done. Peak level: ${max.toFixed(4)}`);
+            }
+        }, 100);
+    }).catch(err => {
+        console.error('[MicTest] Failed:', err);
+    });
+}
+
 // --- Event listeners ---
 btnConnect.addEventListener('click', connect);
 btnWake.addEventListener('click', triggerWake);
+document.getElementById('btn-mic-test').addEventListener('click', testMic);
 
 // J key = wake, Escape = interrupt
 document.addEventListener('keydown', (e) => {

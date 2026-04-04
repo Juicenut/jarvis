@@ -24,6 +24,11 @@
     <div id="controls">
         <button id="btn-connect">Connect</button>
         <button id="btn-wake" disabled>Activate (or say "Jarvis")</button>
+        <button id="btn-mic-test">Test Mic</button>
+    </div>
+
+    <div id="mic-level" style="position:fixed;bottom:60px;left:50%;transform:translateX(-50%);width:200px;height:6px;background:#1a2a3a;border-radius:3px;display:none">
+        <div id="mic-level-bar" style="width:0%;height:100%;background:#4caf50;border-radius:3px;transition:width 0.05s"></div>
     </div>
 
     <!-- Porcupine Web SDK (WASM wake word detection) -->
