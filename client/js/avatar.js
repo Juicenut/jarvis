@@ -1,19 +1,30 @@
 /**
- * Avatar controller — wraps TalkingHead.js for 3D avatar with lip sync.
+ * Avatar controller — TalkingHead.js 3D avatar with lip sync.
  *
- * Falls back to browser SpeechSynthesis when TalkingHead isn't loaded
- * or no avatar model is available. This lets the full pipeline work
- * end-to-end even without the 3D avatar.
+ * Uses TalkingHead's speakAudio() method: we fetch audio + word timing
+ * from our server's /api/tts endpoint, then feed both to TalkingHead
+ * for synchronized lip animation.
+ *
+ * Falls back to browser SpeechSynthesis when no avatar model is loaded.
  */
 
 const TTS_ENDPOINT = 'http://localhost:8000/api/tts';
 
+let TalkingHead = null;
+
+// Try to import TalkingHead (loaded via import map in index.html)
+try {
+    const module = await import('talkinghead');
+    TalkingHead = module.TalkingHead;
+} catch (err) {
+    console.warn('[Avatar] TalkingHead module not available:', err.message);
+}
+
 export class AvatarController {
     constructor() {
-        this.talkingHead = null;
+        this.head = null;
         this.container = null;
         this._initialized = false;
-        this._useFallback = false;
         this._speaking = false;
         this._currentUtterance = null;
     }
@@ -25,69 +36,59 @@ export class AvatarController {
     async init(container) {
         this.container = container;
 
-        // Check if TalkingHead is loaded (from CDN script tag)
-        if (window.TalkingHead) {
-            try {
-                await this._initTalkingHead(container);
-                return;
-            } catch (err) {
-                console.warn('[Avatar] TalkingHead init failed, using fallback:', err);
-            }
+        if (!TalkingHead) {
+            console.log('[Avatar] Using browser SpeechSynthesis fallback');
+            return;
         }
 
-        // Fallback: use browser speech synthesis
-        this._useFallback = true;
-        console.log('[Avatar] Using browser SpeechSynthesis fallback (no TalkingHead/avatar)');
-    }
+        try {
+            // Hide the placeholder text
+            const placeholder = container.querySelector('#avatar-placeholder');
 
-    async _initTalkingHead(container) {
-        // TalkingHead.js initialization
-        // This will be refined once we have a GLB model and test the actual library
-        this.talkingHead = new window.TalkingHead(container, {
-            ttsEndpoint: TTS_ENDPOINT,
-            cameraView: 'head',
-            cameraRotateEnable: false,
-        });
+            // Create TalkingHead instance
+            this.head = new TalkingHead(container, {
+                cameraView: 'upper',
+                cameraRotateEnable: true,
+                cameraPanEnable: false,
+                cameraZoomEnable: false,
+            });
 
-        // Load avatar model — placeholder path, will need a real GLB
-        // TalkingHead requires a model with ARKit blend shapes + Oculus visemes
-        // await this.talkingHead.showAvatar('/assets/avatar/jarvis.glb');
+            // Try to load avatar model
+            const avatarUrl = 'assets/avatar/jarvis.glb';
+            const avatarExists = await fetch(avatarUrl, { method: 'HEAD' })
+                .then(r => r.ok).catch(() => false);
 
-        this._initialized = true;
-        console.log('[Avatar] TalkingHead initialized');
+            if (avatarExists) {
+                await this.head.showAvatar({
+                    url: avatarUrl,
+                    body: 'M',
+                    avatarMood: 'neutral',
+                    lipsyncLang: 'en',
+                });
+                if (placeholder) placeholder.style.display = 'none';
+                this._initialized = true;
+                console.log('[Avatar] TalkingHead loaded with avatar model');
+            } else {
+                console.warn('[Avatar] No avatar model at assets/avatar/jarvis.glb');
+                console.log('[Avatar] Create one at https://avaturn.me and export as GLB');
+                console.log('[Avatar] Using TTS audio playback without 3D avatar');
+            }
+        } catch (err) {
+            console.error('[Avatar] TalkingHead init failed:', err);
+        }
     }
 
     /**
-     * Speak text with lip sync (or fallback to browser TTS).
-     * Returns a promise that resolves when speech is complete.
+     * Speak text with lip sync.
+     * Fetches audio + word timing from server, feeds to TalkingHead.
      * @param {string} text
+     * @returns {Promise} resolves when speech completes
      */
     async speak(text) {
         this._speaking = true;
 
-        if (this.talkingHead && this._initialized) {
-            return this._speakWithTalkingHead(text);
-        }
-
-        return this._speakWithFallback(text);
-    }
-
-    async _speakWithTalkingHead(text) {
         try {
-            // TalkingHead's speakText method handles TTS + lip sync
-            await this.talkingHead.speakText(text);
-        } catch (err) {
-            console.error('[Avatar] TalkingHead speak error:', err);
-            // Fall back to browser TTS for this sentence
-            await this._speakWithFallback(text);
-        } finally {
-            this._speaking = false;
-        }
-    }
-
-    async _speakWithFallback(text) {
-        // First try server TTS for actual audio quality
-        try {
+            // Fetch TTS audio + timing from server
             const resp = await fetch(TTS_ENDPOINT, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -95,102 +96,111 @@ export class AvatarController {
             });
             const data = await resp.json();
 
-            if (data.audio_base64 && !data.stub) {
-                await this._playBase64Audio(data.audio_base64, data.content_type);
-                this._speaking = false;
-                return;
+            if (data.stub || !data.audio_base64) {
+                // No real TTS available — use browser fallback
+                return this._speakWithBrowserTTS(text);
             }
+
+            // Decode base64 audio to ArrayBuffer
+            const binaryStr = atob(data.audio_base64);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+            }
+
+            if (this.head && this._initialized) {
+                return this._speakWithTalkingHead(bytes.buffer, data.timepoints, text);
+            }
+
+            // TalkingHead not ready — play audio directly
+            return this._playAudioBlob(bytes, data.content_type);
         } catch (err) {
-            console.warn('[Avatar] Server TTS failed, using browser synthesis:', err);
+            console.error('[Avatar] Speak error:', err);
+            return this._speakWithBrowserTTS(text);
+        } finally {
+            this._speaking = false;
+        }
+    }
+
+    async _speakWithTalkingHead(audioArrayBuffer, timepoints, text) {
+        // Decode MP3 to AudioBuffer for TalkingHead
+        const audioCtx = new AudioContext();
+        const audioBuffer = await audioCtx.decodeAudioData(audioArrayBuffer);
+        await audioCtx.close();
+
+        // Build word timing arrays from server timepoints
+        // Timepoints are {mark: "w0", time: 0.015} for each word
+        const words = text.split(/\s+/);
+        const wtimes = [];
+        const wdurations = [];
+
+        for (let i = 0; i < words.length; i++) {
+            const tp = timepoints.find(t => t.mark === `w${i}`);
+            const nextTp = timepoints.find(t => t.mark === `w${i + 1}`);
+
+            if (tp) {
+                wtimes.push(Math.round(tp.time * 1000)); // seconds to ms
+                const duration = nextTp
+                    ? Math.round((nextTp.time - tp.time) * 1000)
+                    : 300; // default duration for last word
+                wdurations.push(duration);
+            }
         }
 
-        // Final fallback: browser SpeechSynthesis
-        return new Promise((resolve) => {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'en-GB';
-            utterance.rate = 1.0;
-            utterance.pitch = 0.9; // Slightly deeper for Jarvis
-            this._currentUtterance = utterance;
-
-            utterance.onend = () => {
-                this._speaking = false;
-                this._currentUtterance = null;
-                resolve();
-            };
-            utterance.onerror = () => {
-                this._speaking = false;
-                this._currentUtterance = null;
-                resolve();
-            };
-
-            speechSynthesis.speak(utterance);
+        // Feed audio + word timing to TalkingHead
+        await this.head.speakAudio({
+            audio: audioBuffer,
+            words: words.slice(0, wtimes.length),
+            wtimes,
+            wdurations,
         });
     }
 
-    /**
-     * Play base64-encoded audio through Web Audio API.
-     */
-    async _playBase64Audio(base64Data, contentType) {
-        const binaryStr = atob(base64Data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-            bytes[i] = binaryStr.charCodeAt(i);
-        }
-
+    async _playAudioBlob(bytes, contentType) {
         const blob = new Blob([bytes], { type: contentType });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
 
         return new Promise((resolve) => {
-            audio.onended = () => {
-                URL.revokeObjectURL(url);
-                resolve();
-            };
-            audio.onerror = () => {
-                URL.revokeObjectURL(url);
-                resolve();
-            };
+            audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+            audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
             audio.play();
         });
     }
 
-    /**
-     * Set avatar visual state.
-     */
-    setState(state) {
-        if (!this.talkingHead) return;
-
-        // TalkingHead emotion/animation control
-        // Will be refined once we test the actual library
-        switch (state) {
-            case 'idle':
-                // Subtle idle animations (handled by TalkingHead default)
-                break;
-            case 'listening':
-                // Could set an attentive expression
-                break;
-            case 'processing':
-                // Could set a thinking expression
-                break;
-            case 'speaking':
-                // Handled by speak() method
-                break;
-        }
+    _speakWithBrowserTTS(text) {
+        return new Promise((resolve) => {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-GB';
+            utterance.rate = 1.0;
+            utterance.pitch = 0.9;
+            this._currentUtterance = utterance;
+            utterance.onend = () => { this._currentUtterance = null; resolve(); };
+            utterance.onerror = () => { this._currentUtterance = null; resolve(); };
+            speechSynthesis.speak(utterance);
+        });
     }
 
-    /**
-     * Stop current speech immediately.
-     */
+    setState(state) {
+        if (!this.head || !this._initialized) return;
+        try {
+            switch (state) {
+                case 'listening':
+                    this.head.setMood('happy');
+                    break;
+                case 'processing':
+                    this.head.setMood('thinking');
+                    break;
+                case 'idle':
+                    this.head.setMood('neutral');
+                    break;
+            }
+        } catch (e) { /* mood methods may not exist in all versions */ }
+    }
+
     stopSpeaking() {
         this._speaking = false;
-
-        if (this.talkingHead) {
-            try {
-                this.talkingHead.stopSpeaking?.();
-            } catch (e) { /* ignore */ }
-        }
-
-        // Cancel browser speech synthesis
+        try { this.head?.stopSpeaking?.(); } catch (e) { /* ignore */ }
         speechSynthesis.cancel();
         this._currentUtterance = null;
     }

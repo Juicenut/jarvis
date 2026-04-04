@@ -8,7 +8,6 @@
 </head>
 <body>
     <div id="avatar-container">
-        <!-- TalkingHead.js avatar will render here (Step 7) -->
         <div id="avatar-placeholder">JARVIS</div>
     </div>
 
@@ -24,15 +23,21 @@
     <div id="controls">
         <button id="btn-connect">Connect</button>
         <button id="btn-wake" disabled>Activate (or say "Jarvis")</button>
-        <button id="btn-mic-test">Test Mic</button>
-    </div>
-
-    <div id="mic-level" style="position:fixed;bottom:60px;left:50%;transform:translateX(-50%);width:200px;height:6px;background:#1a2a3a;border-radius:3px;display:none">
-        <div id="mic-level-bar" style="width:0%;height:100%;background:#4caf50;border-radius:3px;transition:width 0.05s"></div>
     </div>
 
     <!-- Porcupine Web SDK (WASM wake word detection) -->
     <script src="https://unpkg.com/@picovoice/porcupine-web@3.0.3/dist/iife/index.js"></script>
+
+    <!-- TalkingHead.js dependencies via import map -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js/+esm",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+            "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/modules/talkinghead.mjs"
+        }
+    }
+    </script>
 
     <script type="module" src="js/app.js"></script>
 </body>

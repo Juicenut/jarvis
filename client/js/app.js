@@ -73,7 +73,12 @@ function setState(newState) {
 function handleMessage(msg) {
     switch (msg.type) {
         case 'state':
-            // Server-driven state changes (from STT/pipeline)
+            // Ignore server's idle transition while we're still playing audio
+            // The client manages SPEAKING → LISTENING/IDLE via playback.onAllComplete
+            if (msg.state === 'idle' && (currentState === State.SPEAKING || playback?.isPlaying)) {
+                console.log('[State] Ignoring server idle — still speaking');
+                break;
+            }
             if (msg.state !== currentState) {
                 setState(msg.state);
             }
@@ -231,50 +236,9 @@ function triggerInterrupt() {
     // Server will transition us to LISTENING
 }
 
-// --- Mic test ---
-function testMic() {
-    const levelContainer = document.getElementById('mic-level');
-    const levelBar = document.getElementById('mic-level-bar');
-    levelContainer.style.display = 'block';
-
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-        const ctx = new AudioContext();
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 512;
-        source.connect(analyser);
-        const data = new Float32Array(analyser.fftSize);
-
-        const track = stream.getAudioTracks()[0];
-        console.log(`[MicTest] Track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
-        console.log(`[MicTest] Settings: ${JSON.stringify(track.getSettings())}`);
-
-        let checks = 0;
-        const interval = setInterval(() => {
-            analyser.getFloatTimeDomainData(data);
-            let max = 0;
-            for (let i = 0; i < data.length; i++) max = Math.max(max, Math.abs(data[i]));
-            const pct = Math.min(100, max * 500); // scale up for visibility
-            levelBar.style.width = pct + '%';
-            levelBar.style.background = max > 0.01 ? '#4caf50' : '#f44336';
-            checks++;
-            if (checks >= 50) { // 5 seconds
-                clearInterval(interval);
-                stream.getTracks().forEach(t => t.stop());
-                ctx.close();
-                levelContainer.style.display = 'none';
-                console.log(`[MicTest] Done. Peak level: ${max.toFixed(4)}`);
-            }
-        }, 100);
-    }).catch(err => {
-        console.error('[MicTest] Failed:', err);
-    });
-}
-
 // --- Event listeners ---
 btnConnect.addEventListener('click', connect);
 btnWake.addEventListener('click', triggerWake);
-document.getElementById('btn-mic-test').addEventListener('click', testMic);
 
 // J key = wake, Escape = interrupt
 document.addEventListener('keydown', (e) => {

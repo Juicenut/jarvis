@@ -16,7 +16,7 @@ body {
     justify-content: center;
 }
 
-/* Avatar area */
+/* Avatar area — TalkingHead.js renders a canvas here */
 #avatar-container {
     width: 100%;
     flex: 1;
@@ -24,6 +24,12 @@ body {
     align-items: center;
     justify-content: center;
     position: relative;
+    overflow: hidden;
+}
+
+#avatar-container canvas {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 #avatar-placeholder {
